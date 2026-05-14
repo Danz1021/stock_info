@@ -20,7 +20,7 @@ STOCKS = {
     "台積電 2330": "2330",
     "台灣50 0050": "0050",
 }
-CRYPTO_SYMBOLS = ["BTCUSDT"]
+CRYPTO_IDS = {"比特幣 BTC": "bitcoin"}
 
 TW_TZ = timezone(timedelta(hours=8))
 
@@ -39,6 +39,8 @@ def send_telegram(message: str) -> bool:
     }
     try:
         resp = requests.post(url, json=payload, timeout=10)
+        if not resp.ok:
+            print(f"[錯誤] Telegram 回應: {resp.status_code} {resp.text}")
         resp.raise_for_status()
         return True
     except Exception as e:
@@ -95,26 +97,37 @@ def fetch_tw_stocks() -> list[dict]:
     return results
 
 
-# ── 虛擬貨幣（Binance API） ────────────────────────────
+# ── 虛擬貨幣（CoinGecko API） ─────────────────────────
 def fetch_crypto() -> list[dict]:
-    """使用 Binance 公開 API 抓取幣種即時報價（無需 API Key）。"""
+    """使用 CoinGecko 免費 API 抓取幣種報價（無需 API Key，雲端友善）。"""
+    ids = ",".join(CRYPTO_IDS.values())
+    url = (
+        f"https://api.coingecko.com/api/v3/simple/price"
+        f"?ids={ids}&vs_currencies=usd"
+        f"&include_24hr_change=true&include_24hr_vol=true"
+        f"&include_high=true&include_low=true"
+    )
     results = []
-    for symbol in CRYPTO_SYMBOLS:
-        try:
-            # 24hr ticker
-            url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
-            data = requests.get(url, timeout=10).json()
+    try:
+        data = requests.get(url, timeout=15).json()
+        for name, coin_id in CRYPTO_IDS.items():
+            d = data.get(coin_id, {})
+            if not d:
+                results.append({"name": name, "price": None})
+                continue
+            price      = float(d.get("usd", 0))
+            change_pct = float(d.get("usd_24h_change", 0))
+            change     = price / (1 + change_pct / 100) * (change_pct / 100)
             results.append({
-                "name": "比特幣 BTC",
-                "price": float(data["lastPrice"]),
-                "change": float(data["priceChange"]),
-                "change_pct": float(data["priceChangePercent"]),
-                "high": float(data["highPrice"]),
-                "low": float(data["lowPrice"]),
+                "name": name,
+                "price": price,
+                "change": change,
+                "change_pct": change_pct,
             })
-        except Exception as e:
-            print(f"[錯誤] 抓取 {symbol} 失敗: {e}")
-            results.append({"name": "比特幣 BTC", "price": None})
+    except Exception as e:
+        print(f"[錯誤] 抓取加密貨幣失敗: {e}")
+        for name in CRYPTO_IDS:
+            results.append({"name": name, "price": None})
     return results
 
 
@@ -147,12 +160,11 @@ def format_message(stocks: list[dict], crypto: list[dict]) -> str:
         arrow = "🔺" if c["change"] >= 0 else "🔻"
         lines.append(
             f"  {arrow} *{c['name']}*\n"
-            f"       ${c['price']:,.2f} USDT  ({c['change_pct']:+.2f}%)\n"
-            f"       24H 高: ${c['high']:,.2f}  低: ${c['low']:,.2f}"
+            f"       ${c['price']:,.2f} USDT  ({c['change_pct']:+.2f}%)"
         )
 
     lines.append("")
-    lines.append("_資料來源: Yahoo Finance / Binance_")
+    lines.append("_資料來源: TWSE / CoinGecko_")
     return "\n".join(lines)
 
 
