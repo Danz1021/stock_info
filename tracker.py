@@ -165,8 +165,18 @@ def format_message(stocks: list[dict], global_markets: list[dict], crypto: list[
     now = datetime.now(TW_TZ).strftime("%Y/%m/%d %H:%M")
     lines = [f"📊 *市場行情速報*", f"🕐 {now} (台北時間)", ""]
 
-    # 台股
+    # 台股（加權指數排第一）
     lines.append("*📈 台灣股市*")
+    taiex = next((m for m in global_markets if "加權" in m["name"]), None)
+    if taiex:
+        if taiex.get("price") is None:
+            lines.append(f"  {taiex['name']}：抓取失敗")
+        else:
+            arrow = "🔺" if taiex["change"] >= 0 else "🔻"
+            lines.append(
+                f"  {arrow} *{taiex['name']}*\n"
+                f"       {taiex['price']:,.2f} 點  ({taiex['change_pct']:+.2f}%)"
+            )
     for s in stocks:
         if s.get("price") is None:
             lines.append(f"  {s['name']}：抓取失敗")
@@ -179,9 +189,11 @@ def format_message(stocks: list[dict], global_markets: list[dict], crypto: list[
 
     lines.append("")
 
-    # 全球市場
+    # 全球市場（排除加權指數，已顯示於台股區）
     lines.append("*🌍 全球市場*")
     for m in global_markets:
+        if "加權" in m["name"]:
+            continue
         if m.get("price") is None:
             lines.append(f"  {m['name']}：抓取失敗")
             continue
