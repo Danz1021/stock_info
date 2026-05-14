@@ -215,7 +215,7 @@ def format_market_row(m: dict, unit: str = "USD", decimals: int = 2) -> str:
     """格式化單筆市場資料列。"""
     if m.get("price") is None:
         return f"  {m['name']}：抓取失敗"
-    arrow = "🔺" if m["change"] >= 0 else "🔽"
+    arrow = "🔺" if m["change"] >= 0 else "🟢"
     price_fmt = f"{m['price']:,.{decimals}f}"
     return (f"  {arrow} *{m['name']}*\n"
             f"       {price_fmt} {unit}  ({m['change_pct']:+.2f}%)")
@@ -234,7 +234,7 @@ def format_message(stocks: list[dict], global_markets: list[dict],
         if taiex.get("price") is None:
             lines.append(f"  {taiex['name']}：抓取失敗")
         else:
-            arrow = "🔺" if taiex["change"] >= 0 else "🔽"
+            arrow = "🔺" if taiex["change"] >= 0 else "🟢"
             lines.append(
                 f"  {arrow} *{taiex['name']}*\n"
                 f"       {taiex['price']:,.2f} 點  ({taiex['change_pct']:+.2f}%)"
@@ -243,7 +243,7 @@ def format_message(stocks: list[dict], global_markets: list[dict],
         if s.get("price") is None:
             lines.append(f"  {s['name']}：抓取失敗")
             continue
-        arrow = "🔺" if s["change"] >= 0 else "🔽"
+        arrow = "🔺" if s["change"] >= 0 else "🟢"
         lines.append(
             f"  {arrow} *{s['name']}*\n"
             f"       ${s['price']:,.2f}  ({s['change']:+.2f} / {s['change_pct']:+.2f}%)"
@@ -259,7 +259,7 @@ def format_message(stocks: list[dict], global_markets: list[dict],
         if m.get("price") is None:
             lines.append(f"  {m['name']}：抓取失敗")
             continue
-        arrow = "🔺" if m["change"] >= 0 else "🔽"
+        arrow = "🔺" if m["change"] >= 0 else "🟢"
         if "殖利率" in m["name"]:
             unit, fmt = "%", ".3f"
         elif "加權" in m["name"]:
@@ -279,7 +279,7 @@ def format_message(stocks: list[dict], global_markets: list[dict],
         if c.get("price") is None:
             lines.append(f"  {c['name']}：抓取失敗")
             continue
-        arrow = "🔺" if c["change"] >= 0 else "🔽"
+        arrow = "🔺" if c["change"] >= 0 else "🟢"
         lines.append(
             f"  {arrow} *{c['name']}*\n"
             f"       ${c['price']:,.2f} USDT  ({c['change_pct']:+.2f}%)"
