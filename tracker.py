@@ -30,6 +30,15 @@ GLOBAL_MARKETS = {
     "美債10年殖利率": "^TNX",
 }
 
+NIGHT_MARKETS = {
+    "道瓊指數期貨": "YM=F",
+    "納斯達克期貨": "NQ=F",
+    "S&P500期貨": "ES=F",
+    "道瓊指數": "^DJI",
+    "納斯達克指數": "^IXIC",
+    "S&P500指數": "^GSPC",
+}
+
 TW_TZ = timezone(timedelta(hours=8))
 
 
@@ -125,6 +134,48 @@ def fetch_global_markets() -> list[dict]:
     return results
 
 
+# ── 台股夜盤期貨（TAIFEX）────────────────────────────
+def fetch_taiex_night() -> dict:
+    """從 TAIFEX 抓取台指夜盤期貨最近月合約（成交量最大）。"""
+    try:
+        url = "https://mis.taifex.com.tw/futures/api/getQuoteList"
+        payload = {"MarketType": "1", "CommodityID": "TXF", "CommodityGroupID": ""}
+        items = requests.post(url, json=payload, timeout=10).json()["RtData"]["QuoteList"]
+        # 過濾有成交量的合約，取成交量最大的近月
+        actives = [x for x in items if x.get("CTotalVolume", "").isdigit() and int(x["CTotalVolume"]) > 0]
+        if not actives:
+            return {"name": "台股夜盤期貨", "price": None}
+        front = max(actives, key=lambda x: int(x["CTotalVolume"]))
+        price  = float(front["CLastPrice"])
+        prev   = float(front["CRefPrice"])
+        change = price - prev
+        change_pct = (change / prev * 100) if prev else 0
+        return {"name": "台股夜盤期貨", "price": price, "change": change, "change_pct": change_pct}
+    except Exception as e:
+        print(f"[錯誤] 抓取台股夜盤失敗: {e}")
+        return {"name": "台股夜盤期貨", "price": None}
+
+
+# ── 美股晚盤（Yahoo Finance v8）──────────────────────
+def fetch_night_markets() -> list[dict]:
+    """使用 Yahoo Finance 抓取美股指數與期貨。"""
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    results = []
+    for name, symbol in NIGHT_MARKETS.items():
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2d"
+            meta = requests.get(url, headers=headers, timeout=10).json()["chart"]["result"][0]["meta"]
+            price = float(meta.get("regularMarketPrice", 0))
+            prev  = float(meta.get("chartPreviousClose", price))
+            change     = price - prev
+            change_pct = (change / prev) * 100 if prev else 0
+            results.append({"name": name, "price": price, "change": change, "change_pct": change_pct})
+        except Exception as e:
+            print(f"[錯誤] 抓取 {name} 失敗: {e}")
+            results.append({"name": name, "price": None})
+    return results
+
+
 # ── 虛擬貨幣（CoinGecko API） ─────────────────────────
 def fetch_crypto() -> list[dict]:
     """使用 CoinGecko 免費 API 抓取幣種報價（無需 API Key，雲端友善）。"""
@@ -160,7 +211,18 @@ def fetch_crypto() -> list[dict]:
 
 
 # ── 格式化訊息 ────────────────────────────────────────
-def format_message(stocks: list[dict], global_markets: list[dict], crypto: list[dict]) -> str:
+def format_market_row(m: dict, unit: str = "USD", decimals: int = 2) -> str:
+    """格式化單筆市場資料列。"""
+    if m.get("price") is None:
+        return f"  {m['name']}：抓取失敗"
+    arrow = "🔺" if m["change"] >= 0 else "🔻"
+    price_fmt = f"{m['price']:,.{decimals}f}"
+    return (f"  {arrow} *{m['name']}*\n"
+            f"       {price_fmt} {unit}  ({m['change_pct']:+.2f}%)")
+
+
+def format_message(stocks: list[dict], global_markets: list[dict],
+                   taiex_night: dict, night_markets: list[dict], crypto: list[dict]) -> str:
     """組合 Telegram Markdown 訊息。"""
     now = datetime.now(TW_TZ).strftime("%Y/%m/%d %H:%M")
     lines = [f"📊 *市場行情速報*", f"🕐 {now} (台北時間)", ""]
@@ -224,7 +286,20 @@ def format_message(stocks: list[dict], global_markets: list[dict], crypto: list[
         )
 
     lines.append("")
-    lines.append("_資料來源: TWSE / Yahoo Finance / CoinGecko_")
+
+    # 晚盤區塊
+    lines.append("*🌙 晚盤指數*")
+    lines.append(format_market_row(taiex_night, unit="點", decimals=0))
+    for m in night_markets:
+        if "期貨" in m["name"]:
+            lines.append(format_market_row(m, unit="點", decimals=0))
+    lines.append("")
+    for m in night_markets:
+        if "期貨" not in m["name"]:
+            lines.append(format_market_row(m, unit="點", decimals=2))
+
+    lines.append("")
+    lines.append("_資料來源: TWSE / TAIFEX / Yahoo Finance / CoinGecko_")
     return "\n".join(lines)
 
 
@@ -234,9 +309,11 @@ def main():
 
     stocks         = fetch_tw_stocks()
     global_markets = fetch_global_markets()
+    taiex_night    = fetch_taiex_night()
+    night_markets  = fetch_night_markets()
     crypto         = fetch_crypto()
 
-    message = format_message(stocks, global_markets, crypto)
+    message = format_message(stocks, global_markets, taiex_night, night_markets, crypto)
     print("\n" + message + "\n")
 
     ok = send_telegram(message)
