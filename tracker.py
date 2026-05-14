@@ -1,0 +1,198 @@
+"""
+Stock & Crypto Price Tracker
+每次執行抓取台積電(2330)、台灣50(0050)、比特幣(BTC) 並推送 Telegram
+"""
+
+import os
+import sys
+import json
+import requests
+from datetime import datetime, timezone, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── 設定 ─────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
+
+STOCKS = {
+    "台積電 2330": "2330",
+    "台灣50 0050": "0050",
+}
+CRYPTO_SYMBOLS = ["BTCUSDT"]
+
+TW_TZ = timezone(timedelta(hours=8))
+
+
+# ── Telegram ──────────────────────────────────────────
+def send_telegram(message: str) -> bool:
+    """發送 Telegram 訊息，回傳是否成功。"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("[警告] Telegram 未設定，跳過推播。")
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown",
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"[錯誤] Telegram 推播失敗: {e}")
+        return False
+
+
+# ── 台股（yfinance） ──────────────────────────────────
+def fetch_tw_stocks() -> list[dict]:
+    """使用台灣證交所即時 API 抓取台股報價（盤中即時，盤後顯示收盤價）。"""
+    ex_ch = "|".join(f"tse_{code}.tw" for code in STOCKS.values())
+    ts = int(datetime.now(TW_TZ).timestamp() * 1000)
+    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={ex_ch}&_={ts}"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://mis.twse.com.tw/",
+    }
+    results = []
+    try:
+        data = requests.get(url, headers=headers, timeout=10).json()
+        items = data.get("msgArray", [])
+        for name, code in STOCKS.items():
+            item = next((x for x in items if x.get("c") == code), None)
+            if not item:
+                results.append({"name": name, "price": None})
+                continue
+            # z=最新成交價；若為"-"則用最佳委買價(b)第一檔；最後用昨收(y)
+            def first_val(s):
+                v = (s or "").split("_")[0].strip()
+                return v if v and v != "-" else None
+
+            z = first_val(item.get("z", "-"))
+            b = first_val(item.get("b", "-"))
+            y = first_val(item.get("y", "-"))
+            price_str = z or b or y
+            prev_str  = y
+            if not price_str or not prev_str:
+                results.append({"name": name, "price": None})
+                continue
+            price = float(price_str.replace(",", ""))
+            prev  = float(prev_str.replace(",", ""))
+            change     = price - prev
+            change_pct = (change / prev) * 100 if prev else 0
+            results.append({
+                "name": name,
+                "price": price,
+                "change": change,
+                "change_pct": change_pct,
+            })
+    except Exception as e:
+        print(f"[錯誤] 抓取台股失敗: {e}")
+        for name in STOCKS:
+            results.append({"name": name, "price": None})
+    return results
+
+
+# ── 虛擬貨幣（Binance API） ────────────────────────────
+def fetch_crypto() -> list[dict]:
+    """使用 Binance 公開 API 抓取幣種即時報價（無需 API Key）。"""
+    results = []
+    for symbol in CRYPTO_SYMBOLS:
+        try:
+            # 24hr ticker
+            url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
+            data = requests.get(url, timeout=10).json()
+            results.append({
+                "name": "比特幣 BTC",
+                "price": float(data["lastPrice"]),
+                "change": float(data["priceChange"]),
+                "change_pct": float(data["priceChangePercent"]),
+                "high": float(data["highPrice"]),
+                "low": float(data["lowPrice"]),
+            })
+        except Exception as e:
+            print(f"[錯誤] 抓取 {symbol} 失敗: {e}")
+            results.append({"name": "比特幣 BTC", "price": None})
+    return results
+
+
+# ── 格式化訊息 ────────────────────────────────────────
+def format_message(stocks: list[dict], crypto: list[dict]) -> str:
+    """組合 Telegram Markdown 訊息。"""
+    now = datetime.now(TW_TZ).strftime("%Y/%m/%d %H:%M")
+    lines = [f"📊 *市場行情速報*", f"🕐 {now} (台北時間)", ""]
+
+    # 台股
+    lines.append("*📈 台灣股市*")
+    for s in stocks:
+        if s.get("price") is None:
+            lines.append(f"  {s['name']}：抓取失敗")
+            continue
+        arrow = "🔺" if s["change"] >= 0 else "🔻"
+        lines.append(
+            f"  {arrow} *{s['name']}*\n"
+            f"       ${s['price']:,.2f}  ({s['change']:+.2f} / {s['change_pct']:+.2f}%)"
+        )
+
+    lines.append("")
+
+    # 加密貨幣
+    lines.append("*₿ 加密貨幣*")
+    for c in crypto:
+        if c.get("price") is None:
+            lines.append(f"  {c['name']}：抓取失敗")
+            continue
+        arrow = "🔺" if c["change"] >= 0 else "🔻"
+        lines.append(
+            f"  {arrow} *{c['name']}*\n"
+            f"       ${c['price']:,.2f} USDT  ({c['change_pct']:+.2f}%)\n"
+            f"       24H 高: ${c['high']:,.2f}  低: ${c['low']:,.2f}"
+        )
+
+    lines.append("")
+    lines.append("_資料來源: Yahoo Finance / Binance_")
+    return "\n".join(lines)
+
+
+# ── 主流程 ────────────────────────────────────────────
+def main():
+    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 開始抓取行情...")
+
+    stocks = fetch_tw_stocks()
+    crypto = fetch_crypto()
+
+    message = format_message(stocks, crypto)
+    print("\n" + message + "\n")
+
+    ok = send_telegram(message)
+    if ok:
+        print("✅ Telegram 推播成功")
+    else:
+        print("⚠️  Telegram 未推播（請確認 .env 設定）")
+
+    # 同時將結果存入 log
+    log_path = os.path.join(os.path.dirname(__file__), "price_log.json")
+    entry = {
+        "time": datetime.now(TW_TZ).isoformat(),
+        "stocks": stocks,
+        "crypto": crypto,
+    }
+    try:
+        if os.path.exists(log_path):
+            with open(log_path, "r", encoding="utf-8") as f:
+                log = json.load(f)
+        else:
+            log = []
+        log.append(entry)
+        log = log[-500:]  # 只保留最近 500 筆
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(log, f, ensure_ascii=False, indent=2)
+        print(f"📝 已記錄至 {log_path}")
+    except Exception as e:
+        print(f"[警告] 寫入 log 失敗: {e}")
+
+
+if __name__ == "__main__":
+    main()
