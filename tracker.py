@@ -24,6 +24,11 @@ STOCKS = {
 }
 CRYPTO_IDS = {"比特幣 BTC": "bitcoin"}
 
+GLOBAL_MARKETS = {
+    "布蘭特原油": "BZ=F",
+    "美債10年殖利率": "^TNX",
+}
+
 TW_TZ = timezone(timedelta(hours=8))
 
 
@@ -99,6 +104,26 @@ def fetch_tw_stocks() -> list[dict]:
     return results
 
 
+# ── 全球市場（Yahoo Finance v8）──────────────────────
+def fetch_global_markets() -> list[dict]:
+    """使用 Yahoo Finance API 抓取原油、美債殖利率等全球市場資料。"""
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    results = []
+    for name, symbol in GLOBAL_MARKETS.items():
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2d"
+            meta = requests.get(url, headers=headers, timeout=10).json()["chart"]["result"][0]["meta"]
+            price = float(meta.get("regularMarketPrice", 0))
+            prev  = float(meta.get("chartPreviousClose", price))
+            change     = price - prev
+            change_pct = (change / prev) * 100 if prev else 0
+            results.append({"name": name, "symbol": symbol, "price": price, "change": change, "change_pct": change_pct})
+        except Exception as e:
+            print(f"[錯誤] 抓取 {name} 失敗: {e}")
+            results.append({"name": name, "price": None})
+    return results
+
+
 # ── 虛擬貨幣（CoinGecko API） ─────────────────────────
 def fetch_crypto() -> list[dict]:
     """使用 CoinGecko 免費 API 抓取幣種報價（無需 API Key，雲端友善）。"""
@@ -134,7 +159,7 @@ def fetch_crypto() -> list[dict]:
 
 
 # ── 格式化訊息 ────────────────────────────────────────
-def format_message(stocks: list[dict], crypto: list[dict]) -> str:
+def format_message(stocks: list[dict], global_markets: list[dict], crypto: list[dict]) -> str:
     """組合 Telegram Markdown 訊息。"""
     now = datetime.now(TW_TZ).strftime("%Y/%m/%d %H:%M")
     lines = [f"📊 *市場行情速報*", f"🕐 {now} (台北時間)", ""]
@@ -153,6 +178,21 @@ def format_message(stocks: list[dict], crypto: list[dict]) -> str:
 
     lines.append("")
 
+    # 全球市場
+    lines.append("*🌍 全球市場*")
+    for m in global_markets:
+        if m.get("price") is None:
+            lines.append(f"  {m['name']}：抓取失敗")
+            continue
+        arrow = "🔺" if m["change"] >= 0 else "🔻"
+        unit = "%" if "殖利率" in m["name"] else "USD"
+        lines.append(
+            f"  {arrow} *{m['name']}*\n"
+            f"       {m['price']:,.3f} {unit}  ({m['change_pct']:+.2f}%)"
+        )
+
+    lines.append("")
+
     # 加密貨幣
     lines.append("*₿ 加密貨幣*")
     for c in crypto:
@@ -166,7 +206,7 @@ def format_message(stocks: list[dict], crypto: list[dict]) -> str:
         )
 
     lines.append("")
-    lines.append("_資料來源: TWSE / CoinGecko_")
+    lines.append("_資料來源: TWSE / Yahoo Finance / CoinGecko_")
     return "\n".join(lines)
 
 
@@ -174,10 +214,11 @@ def format_message(stocks: list[dict], crypto: list[dict]) -> str:
 def main():
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 開始抓取行情...")
 
-    stocks = fetch_tw_stocks()
-    crypto = fetch_crypto()
+    stocks         = fetch_tw_stocks()
+    global_markets = fetch_global_markets()
+    crypto         = fetch_crypto()
 
-    message = format_message(stocks, crypto)
+    message = format_message(stocks, global_markets, crypto)
     print("\n" + message + "\n")
 
     ok = send_telegram(message)
