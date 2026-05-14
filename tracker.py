@@ -25,6 +25,7 @@ STOCKS = {
 CRYPTO_IDS = {"比特幣 BTC": "bitcoin"}
 
 GLOBAL_MARKETS = {
+    "台股加權指數": "^TWII",
     "布蘭特原油": "BZ=F",
     "美債10年殖利率": "^TNX",
 }
@@ -185,10 +186,15 @@ def format_message(stocks: list[dict], global_markets: list[dict], crypto: list[
             lines.append(f"  {m['name']}：抓取失敗")
             continue
         arrow = "🔺" if m["change"] >= 0 else "🔻"
-        unit = "%" if "殖利率" in m["name"] else "USD"
+        if "殖利率" in m["name"]:
+            unit, fmt = "%", ".3f"
+        elif "加權" in m["name"]:
+            unit, fmt = "點", ",.2f"
+        else:
+            unit, fmt = "USD", ",.3f"
         lines.append(
             f"  {arrow} *{m['name']}*\n"
-            f"       {m['price']:,.3f} {unit}  ({m['change_pct']:+.2f}%)"
+            f"       {m['price']:{fmt}} {unit}  ({m['change_pct']:+.2f}%)"
         )
 
     lines.append("")
