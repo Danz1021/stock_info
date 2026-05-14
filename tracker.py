@@ -19,6 +19,8 @@ TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
 STOCKS = {
     "台積電 2330": "2330",
     "台灣50 0050": "0050",
+    "凱基台灣TOP50 009816": "009816",
+    "統一升級50 00403A": "00403A",
 }
 CRYPTO_IDS = {"比特幣 BTC": "bitcoin"}
 
