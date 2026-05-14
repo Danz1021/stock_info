@@ -5,6 +5,9 @@ on:
     - cron: '*/15 * * * *'   # 每 15 分鐘執行一次（UTC 時間）
   workflow_dispatch:           # 允許手動觸發（方便測試）
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   fetch-and-notify:
     runs-on: ubuntu-latest
